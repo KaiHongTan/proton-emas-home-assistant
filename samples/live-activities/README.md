@@ -11,6 +11,12 @@ estimated time remaining.
 - Automatically starts when `charger_connected` turns on and DC charge current exceeds 5 A
 - Clears when charging completes (SoC ≥ 99%) or is interrupted
 
+## Requirements
+
+- **Home Assistant 2026.7 or later** — Live Activity support was introduced in this release.
+  Both your HA server and the Companion app must be on 2026.7+.
+- The latest version of the [Home Assistant Companion app for iOS](https://apps.apple.com/app/home-assistant/id1099568401).
+
 ## How it works
 
 The automation in `ev-charging.yaml` triggers on state changes of the integration's
