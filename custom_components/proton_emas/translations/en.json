@@ -1,0 +1,88 @@
+{
+  "domain": "proton_emas",
+  "name": "Proton e.MAS",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect vehicle",
+        "description": "Use your vehicle VIN and Bearer JWT from the official Proton e.MAS app traffic or developer tooling.",
+        "data": {
+          "vin": "VIN",
+          "token": "Bearer token",
+          "title": "Name",
+          "scan_interval": "Poll interval (seconds)"
+        }
+      },
+      "reauth": {
+        "title": "Re-authenticate",
+        "description": "Paste a fresh Bearer JWT; tokens expire periodically.",
+        "data": {
+          "token": "Bearer token"
+        }
+      },
+      "reconfigure": {
+        "title": "Update token",
+        "description": "Paste a fresh Bearer JWT for vehicle {vin}. Tokens expire periodically.",
+        "data": {
+          "token": "Bearer token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid authentication",
+      "cannot_connect": "Could not reach vehicle cloud API",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This vehicle is already configured.",
+      "reauth_successful": "Reauthentication successful.",
+      "reconfigure_successful": "Token updated successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Advanced settings",
+        "description": "Adjust polling or overrides matching intercepted mobile-app headers.",
+        "data": {
+          "scan_interval": "Poll interval (seconds)",
+          "api_base": "API base URL",
+          "tenant_id": "Tenant ID",
+          "client_id": "Client ID",
+          "app_version": "App version string",
+          "app_version_code": "App version code"
+        }
+      }
+    }
+  },
+  "services": {
+    "refresh_vehicle": {
+      "name": "Refresh vehicle status",
+      "description": "Poll the cloud now for vehicle telemetry instead of waiting for the next scheduled interval.",
+      "fields": {
+        "vin": {
+          "name": "VIN",
+          "description": "Optional vehicle VIN to refresh only that entry; leave empty to refresh every configured vehicle."
+        }
+      }
+    },
+    "remote_climate_start": {
+      "name": "Remote climate start",
+      "description": "Starts preconditioning with given temperature and duration for the matching VIN.",
+      "fields": {
+        "vin": {
+          "name": "VIN",
+          "description": "Configured vehicle VIN."
+        },
+        "temperature": {
+          "name": "Temperature",
+          "description": "Target cabin temperature (°C)."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Runtime duration in minutes."
+        }
+      }
+    }
+  }
+}

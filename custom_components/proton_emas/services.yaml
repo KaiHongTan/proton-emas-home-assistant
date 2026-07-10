@@ -1,0 +1,48 @@
+refresh_vehicle:
+  name: Refresh vehicle status
+  description: >
+    Request an immediate poll of vehicle telemetry from the cloud for one or all
+    configured vehicles (same as the device "Refresh status" button).
+  fields:
+    vin:
+      name: VIN
+      description: >
+        Optional. If omitted, every configured Proton e.MAS vehicle is refreshed.
+        If set, must match an integration entry.
+      required: false
+      selector:
+        text:
+
+remote_climate_start:
+  name: Remote climate start
+  description: >
+    Start remote cabin preconditioning with explicit temperature and duration.
+    Uses the integration configured for the given VIN.
+  fields:
+    vin:
+      name: VIN
+      description: Vehicle identification number (must match a configured entry).
+      required: true
+      selector:
+        text:
+    temperature:
+      name: Target temperature
+      description: Cabin target temperature in °C used for this session only (updates coordinator temporarily).
+      default: 22
+      selector:
+        number:
+          min: 16
+          max: 30
+          step: 0.5
+          mode: box
+          unit_of_measurement: °C
+    duration:
+      name: Duration
+      description: Minutes before remote climate times out (also stored until changed).
+      default: 15
+      selector:
+        number:
+          min: 1
+          max: 60
+          mode: box
+          unit_of_measurement: min

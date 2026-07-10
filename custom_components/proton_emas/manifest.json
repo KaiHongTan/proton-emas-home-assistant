@@ -1,0 +1,10 @@
+{
+  "domain": "proton_emas",
+  "name": "Proton e.MAS",
+  "config_flow": true,
+  "homeassistant": "2026.4.0",
+  "documentation": "https://github.com/KaiHongTan/proton-emas-home-assistant",
+  "integration_type": "device",
+  "iot_class": "cloud_polling",
+  "version": "0.1.0"
+}

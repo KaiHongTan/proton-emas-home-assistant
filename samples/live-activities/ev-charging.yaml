@@ -1,0 +1,157 @@
+alias: Proton e.MAS - Charging Live Activity
+mode: restart
+trace:
+  stored_traces: 10
+
+# Replace REPLACEME in the notify action with your phone's mobile_app device name
+# (Settings -> Companion app -> Server & devices).
+#
+# Enable the disabled-by-default time_to_fully_charged sensor for the countdown;
+# the activity works without it (no chronometer, just progress + power).
+#
+# Why charger_connected is the gate (from captured data 2026-06-12 / 2026-06-13):
+#   - Driving:  charger_connected = off, dc_charge_current spikes 0–60 A (regen/traction)
+#   - Charging: charger_connected = on,  dc_charge_current = 6.6–13.3 A (AC) or higher (DC)
+#   - Idle:     charger_connected = off, dc_charge_current = 0.3–3.8 A (12V DC-DC converter)
+#   charger_connected lags ~14 min behind actual charge STOP (tracks "plugged in"),
+#   so it's used as the START gate and guard, but NOT as the primary end trigger.
+#   The primary end is dc_charge_current < 5.0 for 2 min (fires while charger still "on").
+
+variables:
+  soc: "sensor.e_mas_7_battery_level"
+  charger: "binary_sensor.e_mas_7_charger_connected"
+  time_to_full: "sensor.e_mas_7_time_to_fully_charged"
+  dc_current: "sensor.e_mas_7_dc_charge_current"
+  dc_voltage: "sensor.e_mas_7_dc_charge_voltage"
+  ac_current: "sensor.e_mas_7_charge_current"
+  ac_voltage: "sensor.e_mas_7_charge_voltage"
+  tag: "proton-emas-charging"
+  complete_threshold: 99
+
+trigger:
+  - trigger: state
+    entity_id: "binary_sensor.e_mas_7_charger_connected"
+    to: "on"
+    id: "plugged_in"
+  - trigger: numeric_state
+    entity_id: "sensor.e_mas_7_dc_charge_current"
+    above: 5.0
+    id: "dc_start"
+  - trigger: numeric_state
+    entity_id: "sensor.e_mas_7_dc_charge_current"
+    below: 5.0
+    for:
+      minutes: 2
+    id: "charge_stop"
+  - trigger: state
+    entity_id: "binary_sensor.e_mas_7_charger_connected"
+    to: "off"
+    id: "unplugged"
+  - trigger: state
+    entity_id: "sensor.e_mas_7_battery_level"
+    id: "soc"
+
+action:
+  - delay: "00:00:05"
+  - condition: template
+    value_template: >
+      {{ is_state(charger, 'on') or trigger.id in ['charge_stop', 'unplugged'] }}
+  - condition: template
+    value_template: >
+      {{ trigger.id != 'soc' or
+         (trigger.from_state is not none and trigger.to_state is not none and
+          (trigger.to_state.state | float(0) | int) !=
+          (trigger.from_state.state | float(0) | int)) }}
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ is_state(charger, 'off') }}"
+        sequence:
+          - action: notify.mobile_app_iphone
+            data:
+              message: "clear_notification"
+              data:
+                tag: "{{ tag }}"
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ states(dc_current) | float(0) < 5.0 and states(soc) | float(0) >= complete_threshold }}
+        sequence:
+          - action: notify.mobile_app_iphone
+            data:
+              title: "e.MAS 7 Charging"
+              message: "Charging Complete · {{ states(soc) | float(0) | int }}%"
+              data:
+                tag: "{{ tag }}"
+                live_update: true
+                critical_text: "{{ states(soc) | float(0) | int }}%"
+                progress: "{{ states(soc) | float(0) | int }}"
+                progress_max: 100
+                notification_icon: mdi:check-circle
+                notification_icon_color: "#2196F3"
+                progress_bar_color: "{{ '#F44336' if states(soc) | float(0) < 20 else '#FF9800' if states(soc) | float(0) < 80 else '#4CAF50' }}"
+                background_color: "#00000000"
+                text_color: "#FFFFFF"
+                url: "/lovelace/0"
+      - conditions:
+          - condition: template
+            value_template: "{{ states(dc_current) | float(0) < 5.0 }}"
+        sequence:
+          - action: notify.mobile_app_iphone
+            data:
+              message: "clear_notification"
+              data:
+                tag: "{{ tag }}"
+      - conditions:
+          - condition: template
+            value_template: "{{ states(time_to_full) | float(0) > 0 }}"
+        sequence:
+          - action: notify.mobile_app_iphone
+            data:
+              title: "e.MAS 7 Charging"
+              message: >
+                {% set ac_a = states(ac_current) | float(0) %}
+                {% set ac_v = states(ac_voltage) | float(0) %}
+                {% set dc_a = states(dc_current) | float(0) %}
+                {% set dc_v = states(dc_voltage) | float(0) %}
+                {% set kw = (ac_a * ac_v / 1000) if ac_a > 0.1 else ((dc_a * dc_v / 1000) if dc_a > 5.0 else 0) %}
+                {% set t = states(time_to_full) | float(0) | int(0) %}
+                {% set h = (t / 60) | int(0) %}
+                {% set m = t - (h * 60) %}
+                {% if kw > 0 %} {{ '%.1f' | format(kw) }} kW{% endif %} · Est. {% if h > 0 %}{{ h }}h{% if m > 0 %} {{ m }}min{% endif %}{% else %}{{ t }} min{% endif %} remaining
+              data:
+                tag: "{{ tag }}"
+                live_update: true
+                silent: true
+                critical_text: "{{ states(soc) | float(0) | int }}%"
+                progress: "{{ states(soc) | float(0) | int }}"
+                progress_max: 100
+                notification_icon: mdi:ev-station
+                notification_icon_color: "#4CAF50"
+                progress_bar_color: "{{ '#F44336' if states(soc) | float(0) < 20 else '#FF9800' if states(soc) | float(0) < 80 else '#4CAF50' }}"
+                background_color: "#00000000"
+                text_color: "#FFFFFF"
+                url: "/lovelace/0"
+    default:
+      - action: notify.mobile_app_iphone
+        data:
+          title: "e.MAS 7 Charging"
+          message: >
+            {% set ac_a = states(ac_current) | float(0) %}
+            {% set ac_v = states(ac_voltage) | float(0) %}
+            {% set dc_a = states(dc_current) | float(0) %}
+            {% set dc_v = states(dc_voltage) | float(0) %}
+            {% set kw = (ac_a * ac_v / 1000) if ac_a > 0.1 else ((dc_a * dc_v / 1000) if dc_a > 5.0 else 0) %}
+            {{ states(soc) | float(0) | int }}%{% if kw > 0 %} · {{ '%.1f' | format(kw) }} kW{% endif %}
+          data:
+            tag: "{{ tag }}"
+            live_update: true
+            critical_text: "{{ states(soc) | float(0) | int }}%"
+            progress: "{{ states(soc) | float(0) | int }}"
+            progress_max: 100
+            notification_icon: mdi:ev-station
+            notification_icon_color: "#4CAF50"
+            progress_bar_color: "{{ '#F44336' if states(soc) | float(0) < 20 else '#FF9800' if states(soc) | float(0) < 80 else '#4CAF50' }}"
+            background_color: "#0B1B2A"
+            text_color: "#FFFFFF"
+            url: "/lovelace/0"
