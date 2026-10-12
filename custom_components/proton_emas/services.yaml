@@ -27,7 +27,7 @@ remote_climate_start:
         text:
     temperature:
       name: Target temperature
-      description: Cabin target temperature in °C used for this session only (updates coordinator temporarily).
+      description: Cabin target temperature in °C for this run only; the Remote climate temperature entity is not changed.
       default: 22
       selector:
         number:
@@ -38,7 +38,7 @@ remote_climate_start:
           unit_of_measurement: °C
     duration:
       name: Duration
-      description: Minutes before remote climate times out (also stored until changed).
+      description: Minutes before remote climate times out, for this run only; the Remote climate duration entity is not changed.
       default: 15
       selector:
         number:

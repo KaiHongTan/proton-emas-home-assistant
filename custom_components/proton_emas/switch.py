@@ -1,4 +1,4 @@
-"""Switches mirroring remote climate, ventilation, and window breathable."""
+"""Switches mirroring remote climate, ventilation, window breathable, and charging."""
 
 from __future__ import annotations
 
@@ -8,7 +8,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 
 from .const import DOMAIN
-from .coordinator import EMASDataUpdateCoordinator, is_window_breathable_active
+from .coordinator import (
+    EMASDataUpdateCoordinator,
+    is_charging,
+    is_window_breathable_active,
+)
 from .entity import EMASCoordinatorEntity
 
 
@@ -97,17 +101,44 @@ class WindowBreathableSwitch(EMASCoordinatorEntity, SwitchEntity):
         await self.coordinator.async_window_breathable_off()
 
 
+class ChargingSwitch(EMASCoordinatorEntity, SwitchEntity):
+    """Start / stop charging while the cable is connected."""
+
+    _attr_name = "Charging"
+    _attr_icon = "mdi:ev-station"
+
+    def __init__(self, coordinator: EMASDataUpdateCoordinator) -> None:
+        super().__init__(coordinator, "switch_charging")
+
+    @property
+    def available(self) -> bool:
+        # statusOfChargerConnection: 0 unplugged, 2 plugged in idle, 3 charging.
+        connection = self.coordinator.data.get("statusOfChargerConnection")
+        return super().available and str(connection) not in ("0", "None", "")
+
+    @property
+    def is_on(self) -> bool | None:
+        return is_charging(self.coordinator.data)
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self.coordinator.async_charging_start()
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self.coordinator.async_charging_stop()
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: EMASDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
-            RemoteClimateSwitch(coordinator),
-            DriverVentSwitch(coordinator),
-            PassengerVentSwitch(coordinator),
-            WindowBreathableSwitch(coordinator),
-        ]
-    )
+    entities: list[SwitchEntity] = [
+        RemoteClimateSwitch(coordinator),
+        DriverVentSwitch(coordinator),
+        PassengerVentSwitch(coordinator),
+        WindowBreathableSwitch(coordinator),
+    ]
+    if (coordinator.data or {}).get("chargerState") is not None:
+        entities.append(ChargingSwitch(coordinator))
+    async_add_entities(entities)

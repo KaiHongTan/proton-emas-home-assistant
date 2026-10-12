@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
@@ -25,6 +28,42 @@ class EMASAuthError(Exception):
 
 class EMASApiError(Exception):
     """API returned an error or unexpected response."""
+
+
+def token_expiry(token: str) -> datetime | None:
+    """Return when the JWT expires as an aware datetime, or None if unknown.
+
+    e.MAS tokens carry no ``exp``; they have ``loginTime`` and ``timeout``,
+    both in milliseconds (30 days observed). A standard ``exp`` (seconds) is
+    used if present. The signature is not checked; this only reads the expiry
+    so we can warn before the token dies.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        if "exp" in claims:
+            return datetime.fromtimestamp(int(claims["exp"]), tz=UTC)
+        expires_ms = int(claims["loginTime"]) + int(claims["timeout"])
+        return datetime.fromtimestamp(expires_ms / 1000, tz=UTC)
+    except (ValueError, KeyError, TypeError, OverflowError, OSError):
+        return None
+
+
+def _unwrap(result: dict[str, Any]) -> Any:
+    """Return ``data`` from the {code, msg, data} envelope or raise."""
+    code = result.get("code")
+    if code == 200:
+        return result.get("data")
+    msg = result.get("msg") or str(result)
+    if code in (401, 403):
+        raise EMASAuthError(msg)
+    # Unknown codes are logged verbatim so the "session evicted" code can be
+    # identified from real traffic and mapped to EMASAuthError.
+    _LOGGER.warning("e.MAS API returned code=%s msg=%s", code, msg)
+    raise EMASApiError(f"{msg} (code {code})")
 
 
 class EMASApi:
@@ -50,6 +89,10 @@ class EMASApi:
         self._client_id = client_id
         self._app_version = app_version
         self._app_version_code = app_version_code
+
+    @property
+    def token(self) -> str:
+        return self._token
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -102,26 +145,20 @@ class EMASApi:
 
     async def get_vehicle_status(self) -> dict[str, Any]:
         """Return full API JSON for getVehicleStatus."""
-        result = await self._post("/iot/function/getVehicleStatus", {"vin": self._vin})
-        code = result.get("code")
-        if code != 200:
-            msg = result.get("msg", str(result))
-            if code in (401, 403):
-                raise EMASAuthError(msg)
-            raise EMASApiError(msg)
-        data = result.get("data")
+        data = _unwrap(await self._post("/iot/function/getVehicleStatus", {"vin": self._vin}))
         if not isinstance(data, dict):
             raise EMASApiError("Missing data object in response")
         return data
 
-    async def vehicle_control(self, body: dict[str, Any]) -> None:
-        """Send vehicleControl; raises on failure."""
+    async def vehicle_control(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Send vehicleControl; return the CommandResponse ({requestId, timestamp, vin})."""
         payload = dict(body)
         payload.setdefault("vin", self._vin)
-        result = await self._post("/iot/function/vehicleControl", payload)
-        code = result.get("code")
-        if code != 200:
-            msg = result.get("msg", str(result))
-            if code in (401, 403):
-                raise EMASAuthError(msg)
-            raise EMASApiError(msg)
+        data = _unwrap(await self._post("/iot/function/vehicleControl", payload))
+        response = data if isinstance(data, dict) else {}
+        _LOGGER.debug(
+            "vehicleControl %s accepted, requestId=%s",
+            payload.get("serviceKey"),
+            response.get("requestId"),
+        )
+        return response

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -11,29 +13,41 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
     UnitOfElectricPotential,
     UnitOfLength,
+    UnitOfPower,
     UnitOfPressure,
     UnitOfSpeed,
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CHARGE_TIME_SENTINEL, DOMAIN
+from .const import (
+    CHARGE_TIME_SENTINEL,
+    CHARGER_STATE_OPTIONS,
+    CHARGER_STATE_OTHER,
+    DOMAIN,
+)
 from .coordinator import EMASDataUpdateCoordinator
 from .entity import EMASCoordinatorEntity
+
 
 @dataclass(frozen=True, kw_only=True)
 class EMASSensorEntityDescription(SensorEntityDescription):
     """Maps HA sensor to API field name."""
 
     api_field: str
+    # Takes the raw field value; bypasses the generic parsing in native_value.
+    value_fn: Callable[[Any], Any] | None = None
+    # Only create the entity if the field appears in the first status payload,
+    # so a powertrain that never reports it does not get a dead entity.
+    create_if_present: bool = False
 
 
 def _parse_float(raw: Any) -> float | None:
@@ -52,6 +66,27 @@ def _parse_int(raw: Any) -> int | None:
         return int(float(raw))
     except (TypeError, ValueError):
         return None
+
+
+def _charger_state(raw: Any) -> str | None:
+    value = _parse_int(raw)
+    if value is None:
+        return None
+    return CHARGER_STATE_OPTIONS.get(value, CHARGER_STATE_OTHER)
+
+
+def _epoch_timestamp(raw: Any) -> datetime | None:
+    """updateTime is a Long epoch; accept seconds or milliseconds."""
+    value = _parse_float(raw)
+    if value is None or value <= 0:
+        return None
+    if value > 1e12:
+        value /= 1000
+    return datetime.fromtimestamp(value, tz=UTC)
+
+
+def _raw(raw: Any) -> Any:
+    return raw.strip() if isinstance(raw, str) else raw
 
 
 SENSOR_TYPES: tuple[EMASSensorEntityDescription, ...] = (
@@ -404,6 +439,59 @@ SENSOR_TYPES: tuple[EMASSensorEntityDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
+    EMASSensorEntityDescription(
+        key="charging_state",
+        api_field="chargerState",
+        name="Charging state",
+        device_class=SensorDeviceClass.ENUM,
+        options=[*dict.fromkeys(CHARGER_STATE_OPTIONS.values()), CHARGER_STATE_OTHER],
+        value_fn=_charger_state,
+        create_if_present=True,
+    ),
+    EMASSensorEntityDescription(
+        key="telemetry_timestamp",
+        api_field="updateTime",
+        name="Telemetry timestamp",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_epoch_timestamp,
+    ),
+    # Raw fields whose units or encodings have not been confirmed against live
+    # traffic. Exposed (mostly disabled) so they can be validated.
+    EMASSensorEntityDescription(
+        key="central_locking_status",
+        api_field="centralLockingStatus",
+        name="Central locking status (raw)",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_raw,
+        create_if_present=True,
+    ),
+    EMASSensorEntityDescription(
+        key="charge_lid_status",
+        api_field="dcOrAcDcChargeLidStatus",
+        name="Charge port lid status (raw)",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_raw,
+        create_if_present=True,
+    ),
+    EMASSensorEntityDescription(
+        key="scheduled_charge_status",
+        api_field="bookChargeSts",
+        name="Scheduled charge status (raw)",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_raw,
+        create_if_present=True,
+    ),
+    EMASSensorEntityDescription(
+        key="charging_start_time",
+        api_field="chargingStartTime",
+        name="Charging start time (raw)",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_raw,
+        create_if_present=True,
+    ),
 )
 
 
@@ -428,6 +516,9 @@ class EMASSensor(EMASCoordinatorEntity, SensorEntity):
             return None
 
         desc = self.entity_description
+
+        if desc.value_fn is not None:
+            return desc.value_fn(raw)
 
         if desc.key in ("time_to_fully_charged", "time_to_target_discharged"):
             s = str(raw).strip()
@@ -467,10 +558,56 @@ class EMASSensor(EMASCoordinatorEntity, SensorEntity):
         return raw
 
 
+class ChargingPowerSensor(EMASCoordinatorEntity, SensorEntity):
+    """AC charging power, chargeUAct x chargeIAct (the car reports no power field)."""
+
+    _attr_name = "Charging power"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, coordinator: EMASDataUpdateCoordinator) -> None:
+        super().__init__(coordinator, "sensor_charging_power")
+
+    @property
+    def native_value(self) -> float | None:
+        data = self.coordinator.data
+        voltage = _parse_float(data.get("chargeUAct"))
+        current = _parse_float(data.get("chargeIAct"))
+        if voltage is None or current is None:
+            return None
+        return round(voltage * current, 1)
+
+
+class TokenExpirySensor(EMASCoordinatorEntity, SensorEntity):
+    """When the captured Bearer token expires (loginTime + timeout from the JWT)."""
+
+    _attr_name = "Token expires"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: EMASDataUpdateCoordinator) -> None:
+        super().__init__(coordinator, "sensor_token_expires")
+
+    @property
+    def native_value(self) -> datetime | None:
+        return self.coordinator.token_expires_at
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: EMASDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(EMASSensor(coordinator, desc) for desc in SENSOR_TYPES)
+    data = coordinator.data or {}
+    entities: list[SensorEntity] = [
+        EMASSensor(coordinator, desc)
+        for desc in SENSOR_TYPES
+        if not desc.create_if_present or data.get(desc.api_field) is not None
+    ]
+    if data.get("chargeUAct") is not None and data.get("chargeIAct") is not None:
+        entities.append(ChargingPowerSensor(coordinator))
+    entities.append(TokenExpirySensor(coordinator))
+    async_add_entities(entities)

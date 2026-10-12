@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -121,6 +121,12 @@ class ProtonEMASConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Entry point when the token is rejected; HA passes the stored entry data."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
@@ -136,9 +142,10 @@ class ProtonEMASConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
 
         return self.async_show_form(
-            step_id="reauth",
+            step_id="reauth_confirm",
             data_schema=STEP_REAUTH_SCHEMA,
             errors=errors,
+            description_placeholders={"vin": entry.data[CONF_VIN]},
         )
 
     async def async_step_reconfigure(

@@ -5,17 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.helpers.update_coordinator import UpdateFailed
 
-from .api import EMASAuthError
 from .const import (
     CONF_VIN,
     DOMAIN,
@@ -67,17 +64,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         domain_data = hass.data.get(DOMAIN, {})
         for coord in domain_data.values():
             if coord.config_entry.data.get(CONF_VIN) == vin:
-                coord.runtime.climate_target_temp = temp
-                coord.runtime.climate_duration_min = duration
-                await coord.async_climate_on()
+                # One-off values: the number entities keep their own settings.
+                await coord.async_climate_on(temperature=temp, duration_min=duration)
                 return
-        raise ValueError(f"No Proton e.MAS configuration for VIN {vin}")
+        raise ServiceValidationError(f"No Proton e.MAS configuration for VIN {vin}")
 
     async def _refresh_vehicle(call: Any) -> None:
         vin = call.data.get("vin")
         domain_data = hass.data.get(DOMAIN, {})
         if not domain_data:
-            raise ValueError("No Proton e.MAS vehicles configured.")
+            raise ServiceValidationError("No Proton e.MAS vehicles configured.")
         matched = 0
         for coord in domain_data.values():
             if vin is not None and coord.config_entry.data.get(CONF_VIN) != vin:
@@ -85,7 +81,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             await coord.async_request_refresh()
             matched += 1
         if vin is not None and matched == 0:
-            raise ValueError(f"No Proton e.MAS configuration for VIN {vin}")
+            raise ServiceValidationError(f"No Proton e.MAS configuration for VIN {vin}")
 
     if not hass.services.has_service(DOMAIN, SERVICE_REMOTE_CLIMATE_START):
         hass.services.async_register(
@@ -112,12 +108,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api = build_api_from_entry(session, entry)
     coordinator = EMASDataUpdateCoordinator(hass, api, entry)
 
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except UpdateFailed as err:
-        if isinstance(err.__cause__, EMASAuthError):
-            raise ConfigEntryAuthFailed(str(err.__cause__)) from err.__cause__
-        raise
+    # Auth failures surface as ConfigEntryAuthFailed from the coordinator,
+    # here and on every later poll, so HA starts the reauth flow.
+    await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -147,4 +140,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload on options update."""
-    await hass.config_entries.async_reload(entry.entry_id)
+    hass.config_entries.async_schedule_reload(entry.entry_id)

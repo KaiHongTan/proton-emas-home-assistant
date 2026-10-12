@@ -163,12 +163,19 @@ Each vehicle creates one **Device** in Home Assistant with the following entitie
 - ECU warnings & extra warnings (raw JSON) — **disabled by default**
 - Diagnostic: usage mode, power source, power mode, fuel type, gear auto status
 - Diagnostic: latitude, longitude, vent details, telemetry timestamps
+- Charging state (AC/DC charging, completed, stopped, error, …) — created only if your
+  vehicle reports `chargerState`
+- Charging power (W), computed from charge voltage × charge current
+- Telemetry timestamp (when the car last reported) and token expiry (from the JWT)
+- Diagnostic raw values for fields still being validated: central locking, charge-port lid,
+  scheduled-charge status, charging start time
 
 ### Binary Sensors
 - Pre-climate active, defrost active, air blower active
 - Engine running, charger connected, GPS trusted
 - Door open (LF, RF, LR, RR), trunk open, hood open, sunroof open
 - Seatbelt (driver, passenger, driver rear, passenger rear)
+- Charging, tyre pressure/temperature warnings (created only if reported)
 
 ### Controls
 | Type | Name | Description |
@@ -178,9 +185,15 @@ Each vehicle creates one **Device** in Home Assistant with the following entitie
 | Switch | Driver seat ventilation | Toggle driver seat vent fan |
 | Switch | Passenger seat ventilation | Toggle passenger seat vent fan |
 | Switch | Window vent | Breathable / crack mode for all windows |
+| Switch | Charging | Start (`RCS-ChargingStart`) / stop (`RCS-ChargingStop`) charging; unavailable when unplugged |
 | Number | Remote climate temperature | Target °C for remote climate (16–30) |
 | Number | Remote climate duration | Minutes remote climate stays on (5–30) |
 | Button | Refresh status | Immediate cloud poll |
+| Button | Horn and lights | `RHL-HornAndLight` |
+| Button | Flash lights | `RHL-LIGHT` |
+
+The door lock shows **locking / unlocking** until telemetry confirms the change. Commands
+are sent one at a time, and failures show the backend's error message.
 
 ### Device Tracker
 - Vehicle GPS location (latitude/longitude) — only reported when `posCanBeTrusted` is `true`.
@@ -215,6 +228,16 @@ See [`samples/live-activities/`](samples/live-activities/) for a companion Home 
 automation that displays a charging Live Activity on your iPhone — showing battery level,
 charge power, and estimated time remaining, using the integration's charging sensors.
 
+## Token expiry and diagnostics
+
+A **Token expires** sensor shows when the token expires (its `loginTime` plus `timeout`,
+30 days after you logged in to the app), and a repair issue appears 3 days before. When the token is rejected, Home Assistant prompts you to
+re-authenticate automatically.
+
+**Settings → Devices & services → Proton e.MAS → ⋮ → Download diagnostics** produces a
+redacted status dump (token, VIN and coordinates removed). Attaching one to an issue is
+the easiest way to help add support for e.MAS 5 / PHEV.
+
 ## Troubleshooting
 
 **"Invalid authentication" during setup?**  
@@ -233,6 +256,8 @@ re-capture the new token for Home Assistant.
 
 ```bash
 python3 -m compileall custom_components/proton_emas
+pip install -r requirements_test.txt
+pytest
 ```
 
 Contributions, bug reports, and captured API payloads for untested vehicle models are welcome.

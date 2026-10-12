@@ -36,3 +36,24 @@ CHARGE_TIME_SENTINEL: Final = frozenset({"2047", "-1", ""})
 
 SERVICE_REMOTE_CLIMATE_START: Final = "remote_climate_start"
 SERVICE_REFRESH_VEHICLE: Final = "refresh_vehicle"
+
+# ChargeStatus wire values (acosdk ChargeStatus.kt / ChargeStatusAdapter: int on the wire).
+CHARGER_STATE_OPTIONS: Final = {
+    0: "default",
+    1: "not_charging",
+    2: "ac_charging",
+    3: "ac_charging_stopped",
+    25: "ac_charging_user_stopped",
+    4: "ac_charging_completed",
+    5: "ac_heating",
+    6: "ac_scheduled",
+    27: "ac_error",
+    18: "dc_error",
+    15: "dc_charging",
+    24: "dc_fast_charging",
+    26: "dc_charging_stopped",
+    28: "dc_boost_charging",
+    30: "wireless_charging",
+}
+CHARGER_STATE_OTHER: Final = "other"
+CHARGER_STATE_CHARGING: Final = frozenset({2, 15, 24, 28, 30})

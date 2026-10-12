@@ -2,26 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from homeassistant.components.lock import LockEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.config_entries import ConfigEntry
 
-from .const import DOMAIN, DOOR_LOCKED_STATUS_VALUE, DOOR_UNLOCKED_STATUS_VALUE
-from .coordinator import EMASDataUpdateCoordinator
+from .const import DOMAIN
+from .coordinator import EMASDataUpdateCoordinator, doors_locked_state
 from .entity import EMASCoordinatorEntity
-
-
-def _primary_door_lock_status(data: dict[str, Any]) -> str:
-    return str(
-        data.get("doorLockStatusLeftFront")
-        or data.get("doorLockStatusRightFront")
-        or data.get("doorLockStatusLeftRear")
-        or data.get("doorLockStatusRightRear")
-        or ""
-    )
 
 
 class EMASVehicleLock(EMASCoordinatorEntity, LockEntity):
@@ -31,20 +19,26 @@ class EMASVehicleLock(EMASCoordinatorEntity, LockEntity):
 
     def __init__(self, coordinator: EMASDataUpdateCoordinator) -> None:
         super().__init__(coordinator, "lock_vehicle")
+        self._requested_locked: bool | None = None
 
     @property
     def is_locked(self) -> bool | None:
-        status = _primary_door_lock_status(self.coordinator.data)
-        if status == DOOR_LOCKED_STATUS_VALUE:
-            return True
-        if status == DOOR_UNLOCKED_STATUS_VALUE:
-            return False
-        return None
+        return doors_locked_state(self.coordinator.data)
+
+    @property
+    def is_locking(self) -> bool:
+        return self.coordinator.is_pending("lock") and self._requested_locked is True
+
+    @property
+    def is_unlocking(self) -> bool:
+        return self.coordinator.is_pending("lock") and self._requested_locked is False
 
     async def async_unlock(self, **kwargs: object) -> None:
+        self._requested_locked = False
         await self.coordinator.async_unlock()
 
     async def async_lock(self, **kwargs: object) -> None:
+        self._requested_locked = True
         await self.coordinator.async_lock()
 
 
