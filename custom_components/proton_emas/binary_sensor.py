@@ -11,12 +11,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.config_entries import ConfigEntry
 
 from .const import (
+    CHARGER_STATE_CHARGING,
     DOMAIN,
     DOOR_OPEN_VALUES,
     HOOD_OPEN_VALUES,
@@ -36,12 +37,32 @@ def _nonzero(raw: Any) -> bool:
     return s not in ("", "0", "false", "False")
 
 
+def _charging(raw: Any) -> bool:
+    try:
+        return int(float(raw)) in CHARGER_STATE_CHARGING
+    except (TypeError, ValueError):
+        return False
+
+
+def _tyre_warning(key: str, field: str, name: str) -> EMASBinarySensorEntityDescription:
+    return EMASBinarySensorEntityDescription(
+        key=key,
+        api_field=field,
+        name=name,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        value_fn=_nonzero,
+        create_if_present=True,
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class EMASBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Binary sensor tied to API field."""
 
     api_field: str
     value_fn: Callable[[Any], bool]
+    # See EMASSensorEntityDescription.create_if_present.
+    create_if_present: bool = False
 
 
 BINARY_TYPES: tuple[EMASBinarySensorEntityDescription, ...] = (
@@ -162,6 +183,28 @@ BINARY_TYPES: tuple[EMASBinarySensorEntityDescription, ...] = (
         device_class=BinarySensorDeviceClass.SAFETY,
         value_fn=_truthy_string,
     ),
+    EMASBinarySensorEntityDescription(
+        key="charging",
+        api_field="chargerState",
+        name="Charging",
+        device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
+        value_fn=_charging,
+        create_if_present=True,
+    ),
+)
+
+TYRE_WARNING_TYPES: tuple[EMASBinarySensorEntityDescription, ...] = tuple(
+    _tyre_warning(f"tyre_{kind}_warning_{pos_key}", f"{field}{pos}", f"Tyre {label} warning {pos_label}")
+    for kind, field, label in (
+        ("pressure", "tyrePreWarning", "pressure"),
+        ("temperature", "tyreTempWarning", "temperature"),
+    )
+    for pos, pos_key, pos_label in (
+        ("LeftFront", "left_front", "left front"),
+        ("RightFront", "right_front", "right front"),
+        ("LeftRear", "left_rear", "left rear"),
+        ("RightRear", "right_rear", "right rear"),
+    )
 )
 
 
@@ -192,4 +235,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: EMASDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(EMASBinarySensor(coordinator, d) for d in BINARY_TYPES)
+    data = coordinator.data or {}
+    async_add_entities(
+        EMASBinarySensor(coordinator, d)
+        for d in (*BINARY_TYPES, *TYRE_WARNING_TYPES)
+        if not d.create_if_present or data.get(d.api_field) is not None
+    )

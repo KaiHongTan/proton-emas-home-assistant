@@ -13,16 +13,16 @@
           "scan_interval": "Poll interval (seconds)"
         }
       },
-      "reauth": {
-        "title": "Re-authenticate",
-        "description": "Paste a fresh Bearer JWT; tokens expire periodically.",
+      "reconfigure": {
+        "title": "Update token",
+        "description": "Paste a fresh Bearer JWT for vehicle {vin}. Tokens expire periodically.",
         "data": {
           "token": "Bearer token"
         }
       },
-      "reconfigure": {
-        "title": "Update token",
-        "description": "Paste a fresh Bearer JWT for vehicle {vin}. Tokens expire periodically.",
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "The saved token for vehicle {vin} was rejected (expired, or the mobile app logged in again). Paste a fresh Bearer JWT.",
         "data": {
           "token": "Bearer token"
         }
@@ -76,13 +76,19 @@
         },
         "temperature": {
           "name": "Temperature",
-          "description": "Target cabin temperature (°C)."
+          "description": "Target cabin temperature (°C) for this run only."
         },
         "duration": {
           "name": "Duration",
-          "description": "Runtime duration in minutes."
+          "description": "Runtime in minutes for this run only."
         }
       }
+    }
+  },
+  "issues": {
+    "token_expiring": {
+      "title": "Proton e.MAS token expires soon",
+      "description": "The Bearer token for {title} expires on {expires}. Capture a fresh token from the mobile app and use **Reconfigure** on the integration entry to replace it before it stops working."
     }
   }
 }

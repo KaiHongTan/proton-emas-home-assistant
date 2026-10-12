@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from homeassistant.components.number import NumberEntity, NumberMode
+from homeassistant.components.number import NumberMode, RestoreNumber
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.config_entries import ConfigEntry
 
 from .const import DOMAIN
 from .coordinator import EMASDataUpdateCoordinator
 from .entity import EMASCoordinatorEntity
 
 
-class ClimateTargetTemperature(EMASCoordinatorEntity, NumberEntity):
+class ClimateTargetTemperature(EMASCoordinatorEntity, RestoreNumber):
     """Target cabin temperature for remote climate start."""
 
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
@@ -32,10 +32,16 @@ class ClimateTargetTemperature(EMASCoordinatorEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         self.coordinator.runtime.climate_target_temp = value
-        await self.async_write_ha_state()
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_number_data()
+        if last is not None and last.native_value is not None:
+            self.coordinator.runtime.climate_target_temp = float(last.native_value)
 
 
-class ClimateDurationMinutes(EMASCoordinatorEntity, NumberEntity):
+class ClimateDurationMinutes(EMASCoordinatorEntity, RestoreNumber):
     """Duration for remote climate when turned on."""
 
     _attr_native_min_value = 5
@@ -54,7 +60,13 @@ class ClimateDurationMinutes(EMASCoordinatorEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         self.coordinator.runtime.climate_duration_min = int(round(value))
-        await self.async_write_ha_state()
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_number_data()
+        if last is not None and last.native_value is not None:
+            self.coordinator.runtime.climate_duration_min = int(round(last.native_value))
 
 
 async def async_setup_entry(
