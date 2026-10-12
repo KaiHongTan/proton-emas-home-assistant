@@ -1,0 +1,112 @@
+alias: Proton e.MAS - Charging Live Activity
+description: >-
+  iOS Live Activity for charging, driven by the integration's Charging state
+  sensor. Needs Companion app with Live Activities (Labs) and HA 2026.7+.
+mode: restart
+trace:
+  stored_traces: 10
+triggers:
+  - trigger: state
+    entity_id: sensor.e_mas_7_charging_state
+    to: null # state changes only, not attribute changes
+    id: state
+  - trigger: state
+    entity_id: binary_sensor.e_mas_7_charger_connected
+    to: "off"
+    id: unplugged
+  - trigger: state
+    entity_id: sensor.e_mas_7_battery_level
+    to: null
+    id: soc
+variables:
+  state_entity: sensor.e_mas_7_charging_state
+  connected_entity: binary_sensor.e_mas_7_charger_connected
+  soc_entity: sensor.e_mas_7_battery_level
+  power_entity: sensor.e_mas_7_charging_power
+  ttf_entity: sensor.e_mas_7_time_to_fully_charged
+  dc_current: sensor.e_mas_7_dc_charge_current
+  dc_voltage: sensor.e_mas_7_dc_charge_voltage
+  tag: proton-emas-charging
+  styles:
+    charging: { icon: mdi:ev-station, color: "#4CAF50", text: Charging }
+    scheduled: { icon: mdi:clock-outline, color: "#FFC107", text: Waiting for scheduled charge }
+    paused: { icon: mdi:pause-circle, color: "#9E9E9E", text: Charging paused }
+    complete: { icon: mdi:check-circle, color: "#2196F3", text: Charging complete }
+    error: { icon: mdi:alert-circle, color: "#F44336", text: Charging error – check the car }
+actions:
+  - delay: "00:00:05"
+  # Ignore HA restarts / integration reloads, so the activity isn't re-created
+  # (repeated starts burn the iOS push-to-start budget). Manual runs have no
+  # from_state and always pass.
+  - condition: template
+    value_template: >
+      {{ trigger.from_state is not defined or trigger.id == 'unplugged' or
+         (trigger.from_state is not none and
+          trigger.from_state.state not in ['unknown', 'unavailable']) }}
+  # Battery level: only push when the whole-number % changes.
+  - condition: template
+    value_template: >
+      {{ trigger.id != 'soc' or
+         (trigger.to_state.state | float(0) | int) !=
+         (trigger.from_state.state | float(0) | int) }}
+  - variables:
+      st: "{{ states(state_entity) }}"
+      soc: "{{ states(soc_entity) | float(0) | int }}"
+      kw: >
+        {% set ac = states(power_entity) | float(0) / 1000 %}
+        {% set dc = states(dc_current) | float(0) * states(dc_voltage) | float(0) / 1000 %}
+        {{ (ac if ac > 0.1 else dc) | round(1) }}
+      ttf: "{{ states(ttf_entity) | int(0) }}"
+      phase: >
+        {% if is_state(connected_entity, 'off') %}end
+        {% elif st in ['ac_charging', 'dc_charging', 'dc_fast_charging',
+                       'dc_boost_charging', 'wireless_charging'] %}charging
+        {% elif st == 'ac_charging_completed' %}complete
+        {% elif st == 'ac_scheduled' %}scheduled
+        {% elif st in ['ac_error', 'dc_error'] %}error
+        {% elif st in ['ac_charging_stopped', 'ac_charging_user_stopped',
+                       'dc_charging_stopped', 'not_charging'] %}
+          {{ 'complete' if soc >= 99 else 'paused' }}
+        {% else %}ignore{% endif %}
+  # 'default'/'other' show up for a second or two between states; skip them.
+  - condition: template
+    value_template: "{{ phase != 'ignore' }}"
+  - if:
+      - condition: template
+        value_template: "{{ phase == 'end' }}"
+    then:
+      - action: notify.mobile_app_iphone
+        data:
+          message: clear_notification
+          data:
+            tag: "{{ tag }}"
+    else:
+      - variables:
+          style: "{{ styles[phase] }}"
+          message: >
+            {% if phase == 'charging' %}
+              {{ kw }} kW{% if ttf > 0 %} · full ~{{ (now() + timedelta(minutes=ttf)).strftime('%H:%M') }}{% endif %}
+            {% else %}{{ style.text }}{% endif %}
+          bar_color: >
+            {% if phase != 'charging' %}{{ style.color }}
+            {% elif soc < 20 %}#F44336{% elif soc < 80 %}#FF9800{% else %}#4CAF50{% endif %}
+      - action: notify.mobile_app_iphone
+        data:
+          title: e.MAS 7
+          message: "{{ message }}"
+          data:
+            tag: "{{ tag }}"
+            live_update: true
+            # Routine % / kW updates are quiet; state changes come through normally.
+            silent: "{{ trigger.id == 'soc' }}"
+            critical_text: "{{ soc }}%"
+            progress: "{{ soc }}"
+            progress_max: 100
+            notification_icon: "{{ style.icon }}"
+            notification_icon_color: "{{ style.color }}"
+            progress_bar_color: "{{ bar_color }}"
+            # Transparent, so iOS draws its own (Liquid Glass) material behind it.
+            background_color: "#00000000"
+            text_color: "#FFFFFF"
+            relevance_score: "{{ 0.8 if phase in ['charging', 'error'] else 0.4 }}"
+            url: /lovelace/0
